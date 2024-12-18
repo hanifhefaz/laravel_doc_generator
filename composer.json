@@ -1,0 +1,30 @@
+{
+    "name": "hanifhefaz/documentation-generator",
+    "description": "A Laravel package to generate technical documentation.",
+    "keywords": ["documentation","html","laravel"],
+    "type": "library",
+    "authors": [
+        {
+            "name": "Hanif Hefaz",
+            "email": "hefaz2010@gmail.com"
+        }
+    ],
+    "require": {
+        "php": "^7.4|^8.0",
+        "erusev/parsedown": "^1.8"
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "HanifHefaz\\DocumentationGenerator\\DocumentationGeneratorServiceProvider"
+            ]
+        }
+    },
+    "autoload": {
+      "psr-4": {
+        "HanifHefaz\\DocumentationGenerator\\": "src/"
+      }
+    },
+    "license": "MIT",
+    "minimum-stability": "dev"
+  }

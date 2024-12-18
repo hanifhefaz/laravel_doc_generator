@@ -4,6 +4,7 @@ namespace HanifHefaz\DocumentationGenerator;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Schema;
 
 class GenerateDocumentationCommand extends Command
 {
@@ -27,6 +28,7 @@ class GenerateDocumentationCommand extends Command
 
         // Generate documentation sections
         $documentation .= $this->getHeaderDocumentation($projectName, $date);
+        $documentation .= $this->getDatabaseDocumentation($path);
         $documentation .= $this->getProjectStructureDocumentation($path);
         $documentation .= $this->getRoutesDocumentation();
         $documentation .= $this->getModelsDocumentation($path);
@@ -102,10 +104,6 @@ class GenerateDocumentationCommand extends Command
     </body>
     </html>
     ";
-    }
-
-    protected function test()
-    {
     }
 
     protected function convertMarkdownToHtml($markdown)
@@ -193,10 +191,11 @@ class GenerateDocumentationCommand extends Command
             $groupedRoutes[$controller][] = $route;
         }
 
-        // Generate documentation
+        // Generate documentation with one example per controller
         foreach ($groupedRoutes as $controller => $routes) {
             $doc .= "### Controller: `$controller`\n\n";
 
+            // Include details for each route
             foreach ($routes as $index => $route) {
                 $number = $index + 1; // Start numbering from 1
                 $doc .= "- **{$number}. URI**: `{$route->uri}`\n";
@@ -204,6 +203,11 @@ class GenerateDocumentationCommand extends Command
                 $doc .= "  - **Action**: `{$route->getActionName()}`\n";
                 $doc .= '  - **Middleware**: ' . implode(', ', $route->gatherMiddleware()) . "\n";
                 $doc .= '  - **Parameters**: ' . json_encode($route->parameterNames()) . "\n\n";
+
+                // Add example for the first route only
+                if ($index === 0) {
+                    $doc .= $this->getRouteExample($controller, $route);
+                }
             }
 
             // Add a horizontal line after each controller's routes
@@ -211,6 +215,25 @@ class GenerateDocumentationCommand extends Command
         }
 
         return $doc;
+    }
+
+    protected function getRouteExample($controller, $route)
+    {
+        // Extract the action name and URI
+        $actionName = $route->getActionMethod(); // Just the method name
+        $uri = $route->uri;
+        $methods = implode(', ', $route->methods());
+
+        // Remove the namespace from the controller class
+        $controllerClass = class_basename($controller);
+
+        // Construct the route definition code
+        $exampleCode = "```php\n";
+        $exampleCode .= "// Example route definition for $controllerClass\n";
+        $exampleCode .= "Route::{$methods}('$uri', [$controllerClass::class, '$actionName'])->name('$actionName');\n";
+        $exampleCode .= "```";
+
+        return "  - **Example Route Definition**:\n" . $exampleCode . "\n";
     }
 
     protected function getModelsDocumentation($path)
@@ -281,9 +304,10 @@ class GenerateDocumentationCommand extends Command
 
                 // Reflection for additional methods
                 $reflection = new \ReflectionClass("App\\Http\\Controllers\\$controllerName");
+                $methods = [];
 
                 foreach ($reflection->getMethods() as $method) {
-                    if ($method->isPublic()) {
+                    if ($method->isPublic() && $method->getDeclaringClass()->getName() === $reflection->getName()) {
                         // Get the method name
                         $methodName = $method->getName();
 
@@ -303,7 +327,18 @@ class GenerateDocumentationCommand extends Command
                         if ($comment) {
                             $doc .= "    - **Description**: $comment\n";
                         }
+
+                        // Collect methods for random selection
+                        $methods[] = $method;
                     }
+                }
+
+                // Add a random method example if any methods exist
+                if (!empty($methods)) {
+                    $randomMethod = $methods[array_rand($methods)]; // Select a random method
+                    $methodCode = $this->getMethodCode($randomMethod); // Get the method code
+                    $doc .= "  - **Random Method Example**:\n";
+                    $doc .= "```php\n$methodCode\n```\n";
                 }
 
                 $doc .= "\n---\n\n"; // Add a horizontal line after each controller
@@ -312,6 +347,22 @@ class GenerateDocumentationCommand extends Command
         }
 
         return $doc;
+    }
+
+    // Helper method to get the code of a method
+    protected function getMethodCode(\ReflectionMethod $method)
+    {
+        $startLine = $method->getStartLine();
+        $endLine = $method->getEndLine();
+        $lines = file($method->getFileName());
+        $methodCode = '';
+
+        // Extract the method lines
+        for ($i = $startLine - 1; $i < $endLine; $i++) {
+            $methodCode .= rtrim($lines[$i]) . PHP_EOL;
+        }
+
+        return $methodCode;
     }
 
     protected function getViewsStructure($path)
@@ -355,7 +406,7 @@ class GenerateDocumentationCommand extends Command
     protected function analyzeBladeView($filePath)
     {
         $content = file_get_contents($filePath);
-        $insights = "## Insights for `{$filePath}`\n\n";
+        $insights = "## View: `{$filePath}`\n\n";
 
         // Check for the layout being extended
         if (preg_match('/@extends\([\'"](.+?)[\'"]\)/', $content, $matches)) {
@@ -573,7 +624,64 @@ class GenerateDocumentationCommand extends Command
 
         return $doc;
     }
+    protected function getDatabaseDocumentation()
+{
+    $doc = "## Database Documentation\n\n";
+    $plantUmlCode = "@startuml\n\n";
 
+    // Get all table names
+    $tables = Schema::getConnection()->getDoctrineSchemaManager()->listTableNames();
+    $tableFields = [];
+    $relationships = [];
+
+    // Collect field names and foreign keys
+    foreach ($tables as $table) {
+        $columns = Schema::getColumnListing($table);
+        $tableFields[$table] = $columns;
+
+        // Fetch foreign keys for relationships
+        $foreignKeys = Schema::getConnection()->getDoctrineSchemaManager()->listTableForeignKeys($table);
+        foreach ($foreignKeys as $foreignKey) {
+            $localColumn = $foreignKey->getLocalColumns()[0];
+            $foreignTable = $foreignKey->getForeignTableName();
+            $relationships[] = [
+                'local' => $table,
+                'foreign' => $foreignTable,
+                'localColumn' => $localColumn,
+                'foreignColumn' => $foreignKey->getForeignColumns()[0] // Assuming one foreign column
+            ];
+        }
+    }
+
+    // Generate PlantUML code for each table
+    foreach ($tableFields as $table => $columns) {
+        $plantUmlCode .= "class $table {\n";
+        foreach ($columns as $column) {
+            $plantUmlCode .= "    + $column\n"; // Mark columns as public
+        }
+        $plantUmlCode .= "}\n\n";
+    }
+
+    // Add relationships to PlantUML
+    foreach ($relationships as $relation) {
+        $plantUmlCode .= "{$relation['local']} --> {$relation['foreign']} : `{$relation['localColumn']}` references `{$relation['foreignColumn']}`\n";
+    }
+
+    $plantUmlCode .= "@enduml\n";
+
+    // Save the PlantUML code to a file and generate the image
+    $pumlFile = 'database_diagram.puml';
+    file_put_contents($pumlFile, $plantUmlCode);
+
+    // Generate the diagram image (e.g., using PlantUML CLI or similar)
+    $imageFile = 'database_diagram.png'; // Specify the image file name
+    exec("java -jar C:\Users\Hifaz\Downloads\plantuml-1.2024.8.jar $pumlFile"); // Adjust the path to your PlantUML jar
+
+    // Link to the generated image in the documentation
+    $doc .= "![Database Diagram](/$imageFile)\n\n"; // Adjust the path based on your server setup
+
+    return $doc;
+}
     protected function getProjectRequirements($languages, $frameworksInput, $databases, $technologies, $devToolsInput)
     {
         $doc = "## Project Requirements\n\n";
@@ -603,4 +711,5 @@ class GenerateDocumentationCommand extends Command
 
         return $doc;
     }
+
 }

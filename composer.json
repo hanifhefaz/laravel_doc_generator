@@ -11,8 +11,7 @@
     ],
     "require": {
         "php": "^7.4|^8.0",
-        "erusev/parsedown": "^1.7",
-        "doctrine/dbal": "^3.9.3"
+        "erusev/parsedown": "^1.7"
     },
     "extra": {
         "laravel": {

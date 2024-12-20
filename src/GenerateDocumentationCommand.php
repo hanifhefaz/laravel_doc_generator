@@ -28,7 +28,6 @@ class GenerateDocumentationCommand extends Command
 
         // Generate documentation sections
         $documentation .= $this->getHeaderDocumentation($projectName, $date);
-        $documentation .= $this->getDatabaseDocumentation($path);
         $documentation .= $this->getProjectStructureDocumentation($path);
         $documentation .= $this->getRoutesDocumentation();
         $documentation .= $this->getModelsDocumentation($path);
@@ -138,7 +137,8 @@ class GenerateDocumentationCommand extends Command
     protected function getProjectStructureDocumentation($path)
     {
         $excludedDirs = $this->option('excludeDir') ? explode(',', $this->option('excludeDir')) : [];
-        $doc = "```\n"; // Start a code block
+        $doc = "## Project's Structure:\n";
+        $doc .= "```\n"; // Start a code block
         $doc .= $this->scanRootDirectory($path, '', true, $excludedDirs); // Pass excluded directories
         $doc .= "```\n"; // End the code block
 
@@ -183,6 +183,7 @@ class GenerateDocumentationCommand extends Command
         $doc = "## Routes Documentation\n\n";
 
         $groupedRoutes = [];
+        $controllerCount = 1; // Initialize a counter for controllers
 
         // Group routes by controller
         foreach ($routes as $route) {
@@ -193,12 +194,12 @@ class GenerateDocumentationCommand extends Command
 
         // Generate documentation with one example per controller
         foreach ($groupedRoutes as $controller => $routes) {
-            $doc .= "### Controller: `$controller`\n\n";
+            $doc .= "### {$controllerCount}. Routes for: `$controller`\n\n";
 
             // Include details for each route
             foreach ($routes as $index => $route) {
                 $number = $index + 1; // Start numbering from 1
-                $doc .= "- **{$number}. URI**: `{$route->uri}`\n";
+                $doc .= "- **Route {$number}**: `{$route->uri}`\n";
                 $doc .= '  - **Method**: ' . implode(', ', $route->methods()) . "\n";
                 $doc .= "  - **Action**: `{$route->getActionName()}`\n";
                 $doc .= '  - **Middleware**: ' . implode(', ', $route->gatherMiddleware()) . "\n";
@@ -212,6 +213,7 @@ class GenerateDocumentationCommand extends Command
 
             // Add a horizontal line after each controller's routes
             $doc .= "---\n\n";
+            $controllerCount++; // Increment the controller counter
         }
 
         return $doc;
@@ -240,27 +242,24 @@ class GenerateDocumentationCommand extends Command
     {
         $modelsPath = $path . '/app/Models';
         $models = array_diff(scandir($modelsPath), ['..', '.']);
+        $modelsCount = 1; // Initialize a counter for models
         $doc = "## Models Documentation\n\n";
 
         foreach ($models as $model) {
             if (pathinfo($model, PATHINFO_EXTENSION) === 'php') {
                 $modelName = pathinfo($model, PATHINFO_FILENAME);
-                $doc .= "- **Model**: `$modelName`\n";
+                $doc .= "### **$modelsCount**: The Model of `$modelName`\n";
 
                 // Reflection for additional details
                 $reflection = new \ReflectionClass("App\\Models\\$modelName");
 
                 // List fillable fields
-                if ($reflection->hasProperty('fillable')) {
-                    $fillableProperty = $reflection->getProperty('fillable');
-                    $fillableProperty->setAccessible(true); // Allow access to protected property
-                    $fillableFields = $fillableProperty->getValue(new ("App\\Models\\$modelName"));
-
-                    $doc .= "  - **Fillable Fields**:\n";
-                    foreach ($fillableFields as $field) {
-                        $doc .= "    - `$field`\n";
-                    }
-                }
+                $fillable = $reflection->getDefaultProperties()['fillable'];
+                $doc .= "  - **Fillable Fields**:\n";
+                $doc .= "```php\n";
+                $fillables = json_encode($fillable, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+                $doc .= "protected \$fillable = {$fillables};\n";
+                $doc .= "```\n";
 
                 // List methods defined in the model
                 $doc .= "  - **Methods**:\n";
@@ -281,7 +280,8 @@ class GenerateDocumentationCommand extends Command
                 foreach ($definedMethods as $methodName) {
                     $doc .= "    - `{$methodName}()`\n";
                 }
-
+                $doc .= "\n---\n\n";
+                $modelsCount++; // Increment the model counter
                 $doc .= "\n";
             }
         }
@@ -300,7 +300,7 @@ class GenerateDocumentationCommand extends Command
         foreach ($controllers as $controller) {
             if (pathinfo($controller, PATHINFO_EXTENSION) === 'php') {
                 $controllerName = pathinfo($controller, PATHINFO_FILENAME);
-                $doc .= "- **{$controllerCount}. Controller**: `$controllerName`\n";
+                $doc .= "### **{$controllerCount}. Controller**: `$controllerName`\n";
 
                 // Reflection for additional methods
                 $reflection = new \ReflectionClass("App\\Http\\Controllers\\$controllerName");
@@ -624,64 +624,7 @@ class GenerateDocumentationCommand extends Command
 
         return $doc;
     }
-    protected function getDatabaseDocumentation()
-{
-    $doc = "## Database Documentation\n\n";
-    $plantUmlCode = "@startuml\n\n";
 
-    // Get all table names
-    $tables = Schema::getConnection()->getDoctrineSchemaManager()->listTableNames();
-    $tableFields = [];
-    $relationships = [];
-
-    // Collect field names and foreign keys
-    foreach ($tables as $table) {
-        $columns = Schema::getColumnListing($table);
-        $tableFields[$table] = $columns;
-
-        // Fetch foreign keys for relationships
-        $foreignKeys = Schema::getConnection()->getDoctrineSchemaManager()->listTableForeignKeys($table);
-        foreach ($foreignKeys as $foreignKey) {
-            $localColumn = $foreignKey->getLocalColumns()[0];
-            $foreignTable = $foreignKey->getForeignTableName();
-            $relationships[] = [
-                'local' => $table,
-                'foreign' => $foreignTable,
-                'localColumn' => $localColumn,
-                'foreignColumn' => $foreignKey->getForeignColumns()[0] // Assuming one foreign column
-            ];
-        }
-    }
-
-    // Generate PlantUML code for each table
-    foreach ($tableFields as $table => $columns) {
-        $plantUmlCode .= "class $table {\n";
-        foreach ($columns as $column) {
-            $plantUmlCode .= "    + $column\n"; // Mark columns as public
-        }
-        $plantUmlCode .= "}\n\n";
-    }
-
-    // Add relationships to PlantUML
-    foreach ($relationships as $relation) {
-        $plantUmlCode .= "{$relation['local']} --> {$relation['foreign']} : `{$relation['localColumn']}` references `{$relation['foreignColumn']}`\n";
-    }
-
-    $plantUmlCode .= "@enduml\n";
-
-    // Save the PlantUML code to a file and generate the image
-    $pumlFile = 'database_diagram.puml';
-    file_put_contents($pumlFile, $plantUmlCode);
-
-    // Generate the diagram image (e.g., using PlantUML CLI or similar)
-    $imageFile = 'database_diagram.png'; // Specify the image file name
-    exec("java -jar C:\Users\Hifaz\Downloads\plantuml-1.2024.8.jar $pumlFile"); // Adjust the path to your PlantUML jar
-
-    // Link to the generated image in the documentation
-    $doc .= "![Database Diagram](/$imageFile)\n\n"; // Adjust the path based on your server setup
-
-    return $doc;
-}
     protected function getProjectRequirements($languages, $frameworksInput, $databases, $technologies, $devToolsInput)
     {
         $doc = "## Project Requirements\n\n";

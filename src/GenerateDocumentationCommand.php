@@ -5,6 +5,7 @@ namespace HanifHefaz\DocumentationGenerator;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Database\Eloquent\Relations\Relation;
 
 class GenerateDocumentationCommand extends Command
 {
@@ -244,6 +245,13 @@ class GenerateDocumentationCommand extends Command
         $models = array_diff(scandir($modelsPath), ['..', '.']);
         $modelsCount = 1; // Initialize a counter for models
         $doc = "## Models Documentation\n\n";
+        $doc .= "The following models are defined in the `app/Models` directory:\n\n";
+
+        foreach ($models as $model) {
+            $modelName = pathinfo($model, PATHINFO_FILENAME);
+            $doc .= "**$modelsCount**: $modelName - ";
+            $modelsCount++;
+        }
 
         foreach ($models as $model) {
             if (pathinfo($model, PATHINFO_EXTENSION) === 'php') {
@@ -254,32 +262,69 @@ class GenerateDocumentationCommand extends Command
                 $reflection = new \ReflectionClass("App\\Models\\$modelName");
 
                 // List fillable fields
-                $fillable = $reflection->getDefaultProperties()['fillable'];
+                $fillable = $reflection->getDefaultProperties()['fillable'] ?? [];
                 $doc .= "  - **Fillable Fields**:\n";
                 $doc .= "```php\n";
                 $fillables = json_encode($fillable, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
                 $doc .= "protected \$fillable = {$fillables};\n";
                 $doc .= "```\n";
 
-                // List methods defined in the model
-                $doc .= "  - **Methods**:\n";
+                // Separate methods & relationships
                 $definedMethods = [];
+                $relationships = [];
+
                 foreach ($reflection->getMethods() as $method) {
-                    // Check if the method is defined in this class (not inherited)
                     if ($method->class === $reflection->getName()) {
-                        // Exclude specific inherited methods from traits
-                        $excludedMethods = ['forceDelete', 'performDeleteOnModel', 'bootSoftDeletes', 'initializeSoftDeletes', 'forceDeleteQuietly', 'runSoftDelete', 'restore', 'restoreQuietly', 'trashed', 'softDeleted', 'restoring', 'restored', 'forceDeleting', 'forceDeleted', 'isForceDeleting', 'getDeletedAtColumn', 'getQualifiedDeletedAtColumn', 'factory', 'newFactory'];
+                        $excludedMethods = [
+                            'forceDelete', 'performDeleteOnModel', 'bootSoftDeletes',
+                            'initializeSoftDeletes', 'forceDeleteQuietly', 'runSoftDelete',
+                            'restore', 'restoreQuietly', 'trashed', 'softDeleted',
+                            'restoring', 'restored', 'forceDeleting', 'forceDeleted',
+                            'isForceDeleting', 'getDeletedAtColumn', 'getQualifiedDeletedAtColumn',
+                            'factory', 'newFactory'
+                        ];
 
                         if (!in_array($method->getName(), $excludedMethods)) {
-                            $definedMethods[] = $method->getName();
+                            try {
+                                $instance = $reflection->newInstance();
+                                $result = $method->invoke($instance);
+
+                                if ($result instanceof Relation) {
+                                    $relationships[] = [
+                                        'name' => $method->getName(),
+                                        'type' => class_basename($result),
+                                        'related' => class_basename($result->getRelated())
+                                    ];
+                                } else {
+                                    $definedMethods[] = $method->getName();
+                                }
+                            } catch (\Throwable $e) {
+                                $definedMethods[] = $method->getName();
+                            }
                         }
                     }
                 }
 
-                // Add defined methods to documentation
-                foreach ($definedMethods as $methodName) {
-                    $doc .= "    - `{$methodName}()`\n";
+                // Add defined methods
+                $doc .= "  - **Methods**:\n";
+                if (!empty($definedMethods)) {
+                    foreach ($definedMethods as $methodName) {
+                        $doc .= "    - `{$methodName}()`\n";
+                    }
+                } else {
+                    $doc .= "    - _(none)_\n";
                 }
+
+                // Add relationships
+                $doc .= "  - **Relationships**:\n";
+                if (!empty($relationships)) {
+                    foreach ($relationships as $rel) {
+                        $doc .= "    - `{$rel['name']}()` → {$rel['type']}({$rel['related']})\n";
+                    }
+                } else {
+                    $doc .= "    - _(none)_\n";
+                }
+
                 $doc .= "\n---\n\n";
                 $modelsCount++; // Increment the model counter
                 $doc .= "\n";
@@ -288,6 +333,7 @@ class GenerateDocumentationCommand extends Command
 
         return $doc;
     }
+
 
     protected function getControllersDocumentation($path)
     {

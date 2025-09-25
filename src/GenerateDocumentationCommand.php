@@ -249,14 +249,13 @@ class GenerateDocumentationCommand extends Command
 
         foreach ($models as $model) {
             $modelName = pathinfo($model, PATHINFO_FILENAME);
-            $doc .= "**$modelsCount**: $modelName - ";
-            $modelsCount++;
+            $doc .= " `$modelName` | ";
         }
 
         foreach ($models as $model) {
             if (pathinfo($model, PATHINFO_EXTENSION) === 'php') {
                 $modelName = pathinfo($model, PATHINFO_FILENAME);
-                $doc .= "### **$modelsCount**: The Model of `$modelName`\n";
+                $doc .= "\n### **$modelsCount**: `$modelName`\n";
 
                 // Reflection for additional details
                 $reflection = new \ReflectionClass("App\\Models\\$modelName");
@@ -325,6 +324,17 @@ class GenerateDocumentationCommand extends Command
                     $doc .= "    - _(none)_\n";
                 }
 
+                // Mermaid diagram for relationships
+                if (!empty($relationships)) {
+                    $doc .= "\n#### Relationship Diagram\n";
+                    $doc .= "```mermaid\n";
+                    $doc .= "graph TD\n";
+                    foreach ($relationships as $rel) {
+                        $doc .= "    {$modelName} -->|{$rel['type']}| {$rel['related']}\n";
+                    }
+                    $doc .= "```\n";
+                }
+
                 $doc .= "\n---\n\n";
                 $modelsCount++; // Increment the model counter
                 $doc .= "\n";
@@ -333,6 +343,7 @@ class GenerateDocumentationCommand extends Command
 
         return $doc;
     }
+
 
 
     protected function getControllersDocumentation($path)

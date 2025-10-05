@@ -32,6 +32,9 @@ class GenerateDocumentationCommand extends Command
         $documentation .= $this->getProjectStructureDocumentation($path);
         $documentation .= $this->getRoutesDocumentation();
         $documentation .= $this->getModelsDocumentation($path);
+        $documentation .= $this->getSimpleModelDiagram($path);
+        $documentation .= $this->getModelsSchemaDiagram($path);
+        $documentation .= $this->getDatabaseSchemaMermaid($path);
         $documentation .= $this->getControllersDocumentation($path);
         $documentation .= $this->getViewsStructure($path);
         $documentation .= $this->getMigrationsDocumentation($path);
@@ -342,6 +345,274 @@ class GenerateDocumentationCommand extends Command
         }
 
         return $doc;
+    }
+
+    protected function getSimpleModelDiagram($path)
+    {
+        $modelsPath = $path . '/app/Models';
+        $models = array_diff(scandir($modelsPath), ['.', '..']);
+        $edges = [];
+        $nodes = [];
+        $processedRelations = [];
+
+        foreach ($models as $modelFile) {
+            if (pathinfo($modelFile, PATHINFO_EXTENSION) !== 'php') {
+                continue;
+            }
+
+            $modelName = pathinfo($modelFile, PATHINFO_FILENAME);
+            $fullClass = "App\\Models\\$modelName";
+
+            if (!class_exists($fullClass)) {
+                continue;
+            }
+
+            try {
+                $reflection = new \ReflectionClass($fullClass);
+                if ($reflection->isAbstract()) {
+                    continue;
+                }
+
+                $instance = $reflection->newInstance();
+
+                $nodes[$modelName] = true; // Track seen classes
+
+                foreach ($reflection->getMethods() as $method) {
+                    if ($method->class !== $fullClass) continue;
+
+                    try {
+                        $result = $method->invoke($instance);
+                        if ($result instanceof \Illuminate\Database\Eloquent\Relations\Relation) {
+                            $related = class_basename(get_class($result->getRelated()));
+                            $relationType = class_basename($result);
+
+                            // Avoid duplicate relationships
+                            $signature = $modelName . '-' . $related . '-' . $relationType;
+                            $reverseSignature = $related . '-' . $modelName . '-' . $relationType;
+
+                            if (in_array($signature, $processedRelations) || in_array($reverseSignature, $processedRelations)) {
+                                continue;
+                            }
+                            $processedRelations[] = $signature;
+
+                            // Determine arrow style
+                            $arrow = match ($relationType) {
+                                'BelongsTo' => " -->|1 to 1| ",
+                                'HasOne' => " -->|1 to 1| ",
+                                'HasMany' => " -->|1 to *| ",
+                                'BelongsToMany' => " -->|* to *| ",
+                                default => " --> ",
+                            };
+
+                            $edges[] = "    {$modelName}{$arrow}{$related}";
+                            $nodes[$related] = true; // Ensure target also rendered
+                        }
+                    } catch (\Throwable $e) {
+                        continue;
+                    }
+                }
+            } catch (\Throwable $e) {
+                continue;
+            }
+        }
+
+        // Generate Mermaid output
+        $diagram = "## Simple Eloquent Class Diagram\n\n";
+        $diagram .= "```mermaid\n";
+        $diagram .= "graph TD\n";
+        $diagram .= "%% Simple class-to-class relationships\n";
+
+        // Ensure all nodes are declared so layout is tight
+        foreach (array_keys($nodes) as $className) {
+            $diagram .= "    {$className}\n";
+        }
+
+        // Add edges
+        foreach ($edges as $edge) {
+            $diagram .= $edge . "\n";
+        }
+
+        $diagram .= "```\n";
+
+        return $diagram;
+    }
+
+    protected function getModelsSchemaDiagram($path)
+    {
+        $modelsPath = $path . '/app/Models';
+        $models = array_diff(scandir($modelsPath), ['..', '.']);
+        $allRelationships = [];
+
+        foreach ($models as $model) {
+            if (pathinfo($model, PATHINFO_EXTENSION) !== 'php') {
+                continue;
+            }
+
+            $modelName = pathinfo($model, PATHINFO_FILENAME);
+            $fullClass = "App\\Models\\$modelName";
+
+            if (!class_exists($fullClass)) {
+                continue;
+            }
+
+            try {
+                $reflection = new \ReflectionClass($fullClass);
+
+                // Create instance (skip if abstract)
+                if ($reflection->isAbstract()) {
+                    continue;
+                }
+
+                $instance = $reflection->newInstance();
+
+                foreach ($reflection->getMethods() as $method) {
+                    if ($method->class === $reflection->getName()) {
+                        try {
+                            $result = $method->invoke($instance);
+
+                            if ($result instanceof \Illuminate\Database\Eloquent\Relations\Relation) {
+                                $relatedModel = get_class($result->getRelated());
+                                $relatedName = class_basename($relatedModel);
+                                $relationType = class_basename($result);
+
+                                $allRelationships[] = [
+                                    'from' => $modelName,
+                                    'to' => $relatedName,
+                                    'type' => $relationType,
+                                ];
+                            }
+                        } catch (\Throwable $e) {
+                            // Skip methods that can't be invoked
+                            continue;
+                        }
+                    }
+                }
+            } catch (\Throwable $e) {
+                continue;
+            }
+        }
+
+        // Now generate the unified Mermaid diagram
+        $diagram = "## Database Schema Diagram\n\n";
+        $diagram .= "```mermaid\n";
+        $diagram .= "graph TD\n";
+
+        foreach ($allRelationships as $rel) {
+            $diagram .= "    {$rel['from']} -->|{$rel['type']}| {$rel['to']}\n";
+        }
+
+        $diagram .= "```\n";
+
+        return $diagram;
+    }
+
+
+    protected function getDatabaseSchemaMermaid($path)
+    {
+        $modelsPath = $path . '/app/Models';
+        $models = array_diff(scandir($modelsPath), ['.', '..']);
+
+        $nodes = [];
+        $edges = [];
+        $processedRelations = [];
+
+        foreach ($models as $modelFile) {
+            if (pathinfo($modelFile, PATHINFO_EXTENSION) !== 'php') {
+                continue;
+            }
+
+            $modelName = pathinfo($modelFile, PATHINFO_FILENAME);
+            $fullClass = "App\\Models\\$modelName";
+
+            if (!class_exists($fullClass)) {
+                continue;
+            }
+
+            try {
+                $reflection = new \ReflectionClass($fullClass);
+
+                if ($reflection->isAbstract()) {
+                    continue;
+                }
+
+                $instance = $reflection->newInstance();
+                $fillable = $reflection->getDefaultProperties()['fillable'] ?? [];
+
+                // Build node for model with fields
+                $label = "{$modelName}\n";
+                if (!empty($fillable)) {
+                    foreach ($fillable as $field) {
+                        $label .= "+ {$field}\n";
+                    }
+                } else {
+                    $label .= "(none)\n";
+                }
+
+                // Escape double quotes inside labels if any (rare)
+                $label = str_replace('"', '\"', $label);
+
+                // Now inject into Mermaid node
+                $node = "    {$modelName}[\"{$label}\"]\n";
+
+                $nodes[$modelName] = $node;
+
+                // Detect relationships
+                foreach ($reflection->getMethods() as $method) {
+                    if ($method->class !== $fullClass) continue;
+
+                    try {
+                        $result = $method->invoke($instance);
+                        if ($result instanceof \Illuminate\Database\Eloquent\Relations\Relation) {
+                            $related = class_basename(get_class($result->getRelated()));
+                            $relationType = class_basename($result);
+
+                            $relationSignature = $modelName . '-' . $related . '-' . $relationType;
+
+                            // Skip if reverse already defined (e.g., A --> B and B --> A)
+                            if (in_array($relationSignature, $processedRelations) || in_array($related . '-' . $modelName . '-' . $relationType, $processedRelations)) {
+                                continue;
+                            }
+
+                            $processedRelations[] = $relationSignature;
+
+                            // Relationship arrows based on type
+                            $arrow = match ($relationType) {
+                                'BelongsTo' => " -->|1 to 1| ",
+                                'HasOne' => " -->|1 to 1| ",
+                                'HasMany' => " -->|1 to *| ",
+                                'BelongsToMany' => " -->|* to *| ",
+                                default => " --> ",
+                            };
+
+                            $edges[] = "    {$modelName}{$arrow}{$related}";
+                        }
+                    } catch (\Throwable $e) {
+                        continue;
+                    }
+                }
+            } catch (\Throwable $e) {
+                continue;
+            }
+        }
+
+        // Generate final Mermaid diagram
+        $diagram = "## Database Schema Advanced\n\n";
+        $diagram .= "```mermaid\n";
+        $diagram .= "%% Mermaid class diagram layout\n";
+        $diagram .= "graph LR\n";
+        $diagram .= "classDef bigText fill:#f9f,stroke:#333,stroke-width:2px,font-size:18px;\n";
+
+        foreach ($nodes as $node) {
+            $diagram .= $node;
+        }
+
+        foreach ($edges as $edge) {
+            $diagram .= $edge . "\n";
+        }
+
+        $diagram .= "```\n";
+
+        return $diagram;
     }
 
 

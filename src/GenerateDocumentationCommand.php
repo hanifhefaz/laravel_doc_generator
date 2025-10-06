@@ -124,10 +124,10 @@ class GenerateDocumentationCommand extends Command
         $doc .= "- [Project Requirements and Installation](#project-requirements-and-installation)\n";
         $doc .= "- [Project Structure](#project-structure)\n";
         $doc .= "- [Routes Documentation](#routes-documentation)\n";
+        $doc .= "- [Models Documentation](#models-documentation)\n";
         $doc .= "- [Simple Eloquent Class Diagram](#simple-eloquent-class-diagram)\n";
         $doc .= "- [Database Schema Diagram](#database-schema-diagram)\n";
         $doc .= "- [Database Schema Advanced](#database-schema-advanced)\n";
-        $doc .= "- [Models Documentation](#models-documentation)\n";
         $doc .= "- [Controllers Documentation](#controllers-documentation)\n";
         $doc .= "- [Views Documentation](#views-documentation)\n";
         $doc .= "- [Migrations Documentation](#migrations-documentation)\n";
@@ -359,7 +359,7 @@ class GenerateDocumentationCommand extends Command
     protected function getProjectStructureDocumentation($path)
     {
         $excludedDirs = $this->option('excludeDir') ? explode(',', $this->option('excludeDir')) : [];
-        $doc = "## Project's Structure:\n";
+        $doc = "## Project Structure:\n";
         $doc .= "```\n"; // Start a code block
         $doc .= $this->scanRootDirectory($path, '', true, $excludedDirs); // Pass excluded directories
         $doc .= "```\n"; // End the code block

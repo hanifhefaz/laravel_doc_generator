@@ -28,10 +28,10 @@ class GenerateDocumentationCommand extends Command
         $documentation .= $this->getProjectRequirementsDocumentation();
         $documentation .= $this->getProjectStructureDocumentation($path);
         $documentation .= $this->getRoutesDocumentation();
+        $documentation .= $this->getModelsDocumentation($path);
         $documentation .= $this->getSimpleModelDiagram($path);
         $documentation .= $this->getModelsSchemaDiagram($path);
         $documentation .= $this->getDatabaseSchemaAdvanced($path);
-        $documentation .= $this->getModelsDocumentation($path);
         $documentation .= $this->getControllersDocumentation($path);
         $documentation .= $this->getViewsStructure($path);
         $documentation .= $this->getMigrationsDocumentation($path);
@@ -351,7 +351,6 @@ class GenerateDocumentationCommand extends Command
         | **Node build issues** | Delete `node_modules` and run `npm install` again. |
         | **Missing .env file** | Recreate it from `.env.example` and regenerate the app key. |
 
-        ---
         MD;
 
         return $markdown;
@@ -1177,16 +1176,16 @@ class GenerateDocumentationCommand extends Command
     {
         $summary  = "## 📘 Documentation Summary\n\n";
         $summary .= "This documentation provides a complete overview of the Laravel application, including every major part of the system. ";
-        $summary .= "It begins with the **Project Requirements and Installation** section, explaining the framework version, dependencies, and setup steps needed to run the project locally or on a server. ";
+        $summary .= "It begins with the **Project Requirements and Installation** section, explaining the framework version, dependencies, and setup steps needed to run the project locally or on a server.\n\n ";
         $summary .= "The **Project Structure** section then describes the application's folder organization and the role of each key directory such as `app/`, `routes/`, and `resources/`. ";
         $summary .= "Following that, the **Routes Documentation** lists all defined routes, including their HTTP methods, URIs, controllers, and middleware, offering a clear map of the application’s endpoints. ";
         $summary .= "The **Simple Eloquent Class Diagram** provides a visual overview of how the main models relate to one another, while the **Database Schema Diagram** and **Database Schema Advanced** sections present Mermaid-based ER diagrams that represent the database structure and relationships in detail. ";
-        $summary .= "Next, the **Models Documentation** section outlines each Eloquent model, showing its fillable fields, methods, and defined relationships such as HasMany, BelongsTo, and HasOne. ";
+        $summary .= "Next, the **Models Documentation** section outlines each Eloquent model, showing its fillable fields, methods, and defined relationships such as HasMany, BelongsTo, and HasOne.\n\n ";
         $summary .= "The **Controllers Documentation** section details all controller classes and their key methods, describing how each one interacts with models, services, and views to implement business logic. ";
         $summary .= "The **Views Documentation** lists Blade templates and layouts that define the front-end presentation of the application. ";
         $summary .= "The **Migrations Documentation** explains each migration file, including table definitions and schema changes, followed by the **Seeders Documentation**, which covers the seeders and the sample data they populate. ";
-        $summary .= "The **Environment Configuration** section provides information about `.env` settings and configuration variables used for databases, caching, mail, and third-party integrations. ";
-        $summary .= "The **Tests Documentation** summarizes unit, feature, and integration tests that ensure the reliability of the system, while the **Middleware Documentation** describes all middleware classes that manage authentication, authorization, and request filtering. ";
+        $summary .= "The **Environment Configuration** section provides information about `.env` settings and configuration variables used for databases, caching, mail, and third-party integrations.\n\n ";
+        $summary .= "The **Tests Documentation** summarizes unit, feature, and integration tests that ensure the reliability of the system, while the **Middleware Documentation** describes all middleware classes that manage authentication, authorization, and request filtering.\n\n ";
         $summary .= "Overall, this documentation provides a structured, visual, and detailed overview of the entire project to assist developers, maintainers, and contributors in understanding the full architecture and functionality of the system.\n";
 
         return $summary;

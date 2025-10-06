@@ -17,11 +17,6 @@ class GenerateDocumentationCommand extends Command
         $path = $this->argument('path');
         $projectName = $this->ask('Please enter the project name');
         $date = $this->ask('Please enter the date (e.g., 2024-12-16)');
-        $languages = $this->ask('Enter the languages used (e.g., PHP, JavaScript)');
-        $frameworksInput = $this->ask('Enter the frameworks used (e.g., Laravel, Vue.js)');
-        $databases = $this->ask('Enter the databases used (e.g., MySQL, PostgreSQL)');
-        $technologies = $this->ask('Enter the front-end technologies used (e.g., HTML, CSS, Bootstrap)');
-        $devToolsInput = $this->ask('Enter development tools (comma-separated, e.g., phpunit, faker)');
 
         $format = $this->choice('Select the documentation format', ['md', 'html'], 0);
 
@@ -45,7 +40,6 @@ class GenerateDocumentationCommand extends Command
         $documentation .= $this->getTestsDocumentation($path);
         $documentation .= $this->getMiddlewareDocumentation();
         $documentation .= $this->getDocumentationSummary();
-        $documentation .= $this->getProjectRequirements($languages, $frameworksInput, $databases, $technologies, $devToolsInput);
 
         // Save the documentation to a file
         $this->saveDocumentation($path, $documentation, $format, $projectName);
@@ -1178,35 +1172,6 @@ class GenerateDocumentationCommand extends Command
         return $doc;
     }
 
-    protected function getProjectRequirements($languages, $frameworksInput, $databases, $technologies, $devToolsInput)
-    {
-        $doc = "## Project Requirements\n\n";
-
-        // Process languages
-        $doc .= "- **Languages**: $languages\n";
-
-        // Process frameworks
-        $frameworks = explode(',', $frameworksInput);
-        $frameworks = array_map('trim', $frameworks); // Trim each framework name
-        $doc .= '- **Frameworks**: ' . implode(', ', $frameworks) . "\n";
-
-        // Process databases
-        $doc .= "- **Databases**: $databases\n";
-
-        // Process front-end technologies
-        $doc .= "- **Technologies**: $technologies\n";
-
-        // Process development tools
-        $doc .= "- **Development Tools**:\n";
-        $devTools = explode(',', $devToolsInput);
-        $devTools = array_map('trim', $devTools); // Trim each tool name
-
-        foreach ($devTools as $tool) {
-            $doc .= "  - `$tool`\n";
-        }
-
-        return $doc;
-    }
 
     protected function getDocumentationSummary()
     {

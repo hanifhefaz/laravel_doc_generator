@@ -17,6 +17,11 @@ class GenerateDocumentationCommand extends Command
         $path = $this->argument('path');
         $projectName = $this->ask('Please enter the project name');
         $date = $this->ask('Please enter the date (e.g., 2024-12-16)');
+        $languages = $this->ask('Enter the languages used (e.g., PHP, JavaScript)');
+        $frameworksInput = $this->ask('Enter the frameworks used (e.g., Laravel, Vue.js)');
+        $databases = $this->ask('Enter the databases used (e.g., MySQL, PostgreSQL)');
+        $technologies = $this->ask('Enter the front-end technologies used (e.g., HTML, CSS, Bootstrap)');
+        $devToolsInput = $this->ask('Enter development tools (comma-separated, e.g., phpunit, faker)');
 
         $format = $this->choice('Select the documentation format', ['md', 'html'], 0);
 
@@ -40,6 +45,7 @@ class GenerateDocumentationCommand extends Command
         $documentation .= $this->getTestsDocumentation($path);
         $documentation .= $this->getMiddlewareDocumentation();
         $documentation .= $this->getDocumentationSummary();
+        $documentation .= $this->getProjectRequirements($languages, $frameworksInput, $databases, $technologies, $devToolsInput);
 
         // Save the documentation to a file
         $this->saveDocumentation($path, $documentation, $format, $projectName);

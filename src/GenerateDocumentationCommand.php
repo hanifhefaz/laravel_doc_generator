@@ -463,23 +463,38 @@ class GenerateDocumentationCommand extends Command
     protected function getModelsDocumentation($path)
     {
         $modelsPath = $path . '/app/Models';
-        $models = array_diff(scandir($modelsPath), ['..', '.']);
-        $modelsCount = 1; // Initialize a counter for models
         $doc = "## Models Documentation\n\n";
-        $doc .= "The following models are defined in the `app/Models` directory:\n\n";
+        $doc .= "The following models are defined in the `app/Models` directory (including subdirectories):\n\n";
 
-        foreach ($models as $model) {
-            $modelName = pathinfo($model, PATHINFO_FILENAME);
-            $doc .= " `$modelName` | ";
+        // Get all PHP model files recursively
+        $modelFiles = $this->getAllModelFiles($modelsPath);
+
+        // List all model names in a single line
+        foreach ($modelFiles as $file) {
+            $doc .= " `" . pathinfo($file, PATHINFO_FILENAME) . "` |";
         }
 
-        foreach ($models as $model) {
-            if (pathinfo($model, PATHINFO_EXTENSION) === 'php') {
-                $modelName = pathinfo($model, PATHINFO_FILENAME);
-                $doc .= "\n### **$modelsCount**: `$modelName`\n";
+        $doc .= "\n\n";
+        $modelsCount = 1;
 
-                // Reflection for additional details
-                $reflection = new \ReflectionClass("App\\Models\\$modelName");
+        foreach ($modelFiles as $modelFile) {
+            $relativePath = str_replace($modelsPath . DIRECTORY_SEPARATOR, '', $modelFile);
+            $modelName = pathinfo($modelFile, PATHINFO_FILENAME);
+
+            // Build the full namespace (handles nested folders)
+            $namespacePart = str_replace(DIRECTORY_SEPARATOR, '\\', dirname($relativePath));
+            $namespacePart = $namespacePart !== '.' ? '\\' . $namespacePart : '';
+            $fullClassName = "App\\Models{$namespacePart}\\{$modelName}";
+
+            // Ensure the model class is loaded
+            if (!class_exists($fullClassName)) {
+                require_once $modelFile;
+            }
+
+            if (class_exists($fullClassName)) {
+                $doc .= "\n### **$modelsCount**: `$fullClassName`\n";
+
+                $reflection = new \ReflectionClass($fullClassName);
 
                 // List fillable fields
                 $fillable = $reflection->getDefaultProperties()['fillable'] ?? [];
@@ -509,7 +524,7 @@ class GenerateDocumentationCommand extends Command
                                 $instance = $reflection->newInstance();
                                 $result = $method->invoke($instance);
 
-                                if ($result instanceof Relation) {
+                                if ($result instanceof \Illuminate\Database\Eloquent\Relations\Relation) {
                                     $relationships[] = [
                                         'name' => $method->getName(),
                                         'type' => class_basename($result),
@@ -557,29 +572,59 @@ class GenerateDocumentationCommand extends Command
                 }
 
                 $doc .= "\n---\n\n";
-                $modelsCount++; // Increment the model counter
-                $doc .= "\n";
+                $modelsCount++;
             }
         }
 
         return $doc;
     }
 
+/**
+ * Recursively collect all PHP model files in the given directory.
+ */
+    protected function getAllModelFiles($dir)
+    {
+        $files = [];
+        $items = scandir($dir);
+
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') continue;
+
+            $path = $dir . DIRECTORY_SEPARATOR . $item;
+
+            if (is_dir($path)) {
+                // Recurse into subdirectories
+                $files = array_merge($files, $this->getAllModelFiles($path));
+            } elseif (pathinfo($path, PATHINFO_EXTENSION) === 'php') {
+                $files[] = $path;
+            }
+        }
+
+        return $files;
+    }
+
+
     protected function getSimpleModelDiagram($path)
     {
         $modelsPath = $path . '/app/Models';
-        $models = array_diff(scandir($modelsPath), ['.', '..']);
+        $modelFiles = $this->getAllModelFiles($modelsPath); // recursive
         $edges = [];
         $nodes = [];
         $processedRelations = [];
 
-        foreach ($models as $modelFile) {
-            if (pathinfo($modelFile, PATHINFO_EXTENSION) !== 'php') {
-                continue;
-            }
-
+        foreach ($modelFiles as $modelFile) {
+            $relativePath = str_replace($modelsPath . DIRECTORY_SEPARATOR, '', $modelFile);
             $modelName = pathinfo($modelFile, PATHINFO_FILENAME);
-            $fullClass = "App\\Models\\$modelName";
+
+            // Build the correct namespaced class name
+            $namespacePart = str_replace(DIRECTORY_SEPARATOR, '\\', dirname($relativePath));
+            $namespacePart = $namespacePart !== '.' ? '\\' . $namespacePart : '';
+            $fullClass = "App\\Models{$namespacePart}\\{$modelName}";
+
+            // Try to load the class if not already loaded
+            if (!class_exists($fullClass)) {
+                require_once $modelFile;
+            }
 
             if (!class_exists($fullClass)) {
                 continue;
@@ -592,25 +637,26 @@ class GenerateDocumentationCommand extends Command
                 }
 
                 $instance = $reflection->newInstance();
-
-                $nodes[$modelName] = true; // Track seen classes
+                $nodes[$modelName] = true; // Add this model as a node
 
                 foreach ($reflection->getMethods() as $method) {
                     if ($method->class !== $fullClass) continue;
 
                     try {
                         $result = $method->invoke($instance);
+
                         if ($result instanceof \Illuminate\Database\Eloquent\Relations\Relation) {
                             $related = class_basename(get_class($result->getRelated()));
                             $relationType = class_basename($result);
 
-                            // Avoid duplicate relationships
+                            // Avoid duplicate edges
                             $signature = $modelName . '-' . $related . '-' . $relationType;
                             $reverseSignature = $related . '-' . $modelName . '-' . $relationType;
 
                             if (in_array($signature, $processedRelations) || in_array($reverseSignature, $processedRelations)) {
                                 continue;
                             }
+
                             $processedRelations[] = $signature;
 
                             // Determine arrow style
@@ -623,7 +669,7 @@ class GenerateDocumentationCommand extends Command
                             };
 
                             $edges[] = "    {$modelName}{$arrow}{$related}";
-                            $nodes[$related] = true; // Ensure target also rendered
+                            $nodes[$related] = true; // Ensure target node is declared
                         }
                     } catch (\Throwable $e) {
                         continue;
@@ -634,13 +680,13 @@ class GenerateDocumentationCommand extends Command
             }
         }
 
-        // Generate Mermaid output
+        // Generate Mermaid diagram
         $diagram = "## Simple Eloquent Class Diagram\n\n";
         $diagram .= "```mermaid\n";
         $diagram .= "graph TD\n";
         $diagram .= "%% Simple class-to-class relationships\n";
 
-        // Ensure all nodes are declared so layout is tight
+        // Declare all nodes
         foreach (array_keys($nodes) as $className) {
             $diagram .= "    {$className}\n";
         }
@@ -655,19 +701,26 @@ class GenerateDocumentationCommand extends Command
         return $diagram;
     }
 
+
     protected function getModelsSchemaDiagram($path)
     {
         $modelsPath = $path . '/app/Models';
-        $models = array_diff(scandir($modelsPath), ['..', '.']);
+        $modelFiles = $this->getAllModelFiles($modelsPath); // recursive
         $allRelationships = [];
 
-        foreach ($models as $model) {
-            if (pathinfo($model, PATHINFO_EXTENSION) !== 'php') {
-                continue;
-            }
+        foreach ($modelFiles as $modelFile) {
+            $relativePath = str_replace($modelsPath . DIRECTORY_SEPARATOR, '', $modelFile);
+            $modelName = pathinfo($modelFile, PATHINFO_FILENAME);
 
-            $modelName = pathinfo($model, PATHINFO_FILENAME);
-            $fullClass = "App\\Models\\$modelName";
+            // Build correct namespaced class name (handles nested folders)
+            $namespacePart = str_replace(DIRECTORY_SEPARATOR, '\\', dirname($relativePath));
+            $namespacePart = $namespacePart !== '.' ? '\\' . $namespacePart : '';
+            $fullClass = "App\\Models{$namespacePart}\\{$modelName}";
+
+            // Load file if class not already defined
+            if (!class_exists($fullClass)) {
+                require_once $modelFile;
+            }
 
             if (!class_exists($fullClass)) {
                 continue;
@@ -676,7 +729,7 @@ class GenerateDocumentationCommand extends Command
             try {
                 $reflection = new \ReflectionClass($fullClass);
 
-                // Create instance (skip if abstract)
+                // Skip abstract classes
                 if ($reflection->isAbstract()) {
                     continue;
                 }
@@ -700,7 +753,6 @@ class GenerateDocumentationCommand extends Command
                                 ];
                             }
                         } catch (\Throwable $e) {
-                            // Skip methods that can't be invoked
                             continue;
                         }
                     }
@@ -710,13 +762,21 @@ class GenerateDocumentationCommand extends Command
             }
         }
 
-        // Now generate the unified Mermaid diagram
+        // Generate the Mermaid schema diagram
         $diagram = "## Database Schema Diagram\n\n";
         $diagram .= "```mermaid\n";
         $diagram .= "graph TD\n";
+        $diagram .= "%% Auto-generated Eloquent relationships across all models\n";
 
         foreach ($allRelationships as $rel) {
-            $diagram .= "    {$rel['from']} -->|{$rel['type']}| {$rel['to']}\n";
+            $arrow = match ($rel['type']) {
+                'BelongsTo' => " -->|1 to 1| ",
+                'HasOne' => " -->|1 to 1| ",
+                'HasMany' => " -->|1 to *| ",
+                'BelongsToMany' => " -->|* to *| ",
+                default => " --> ",
+            };
+            $diagram .= "    {$rel['from']}{$arrow}{$rel['to']}\n";
         }
 
         $diagram .= "```\n";
@@ -728,19 +788,17 @@ class GenerateDocumentationCommand extends Command
     protected function getDatabaseSchemaAdvanced($path)
     {
         $modelsPath = $path . '/app/Models';
-        $models = array_diff(scandir($modelsPath), ['.', '..']);
+        $modelFiles = $this->getAllModelFiles($modelsPath);
 
         $nodes = [];
         $edges = [];
         $processedRelations = [];
 
-        foreach ($models as $modelFile) {
-            if (pathinfo($modelFile, PATHINFO_EXTENSION) !== 'php') {
-                continue;
-            }
-
-            $modelName = pathinfo($modelFile, PATHINFO_FILENAME);
-            $fullClass = "App\\Models\\$modelName";
+        foreach ($modelFiles as $filePath) {
+            $relativePath = str_replace($modelsPath . DIRECTORY_SEPARATOR, '', $filePath);
+            $relativePath = str_replace(['/', '\\'], '\\', $relativePath);
+            $className = str_replace('.php', '', $relativePath);
+            $fullClass = "App\\Models\\{$className}";
 
             if (!class_exists($fullClass)) {
                 continue;
@@ -756,7 +814,9 @@ class GenerateDocumentationCommand extends Command
                 $instance = $reflection->newInstance();
                 $fillable = $reflection->getDefaultProperties()['fillable'] ?? [];
 
-                // Build node for model with fields
+                $modelName = $reflection->getShortName();
+
+                // Build node label
                 $label = "{$modelName}\n";
                 if (!empty($fillable)) {
                     foreach ($fillable as $field) {
@@ -766,13 +826,10 @@ class GenerateDocumentationCommand extends Command
                     $label .= "(none)\n";
                 }
 
-                // Escape double quotes inside labels if any (rare)
+                // Escape double quotes for Mermaid
                 $label = str_replace('"', '\"', $label);
 
-                // Now inject into Mermaid node
-                $node = "    {$modelName}[\"{$label}\"]\n";
-
-                $nodes[$modelName] = $node;
+                $nodes[$modelName] = "    {$modelName}[\"{$label}\"]\n";
 
                 // Detect relationships
                 foreach ($reflection->getMethods() as $method) {
@@ -784,16 +841,15 @@ class GenerateDocumentationCommand extends Command
                             $related = class_basename(get_class($result->getRelated()));
                             $relationType = class_basename($result);
 
-                            $relationSignature = $modelName . '-' . $related . '-' . $relationType;
+                            $relationSignature = "{$modelName}-{$related}-{$relationType}";
+                            $reverseSignature = "{$related}-{$modelName}-{$relationType}";
 
-                            // Skip if reverse already defined (e.g., A --> B and B --> A)
-                            if (in_array($relationSignature, $processedRelations) || in_array($related . '-' . $modelName . '-' . $relationType, $processedRelations)) {
+                            if (in_array($relationSignature, $processedRelations) || in_array($reverseSignature, $processedRelations)) {
                                 continue;
                             }
 
                             $processedRelations[] = $relationSignature;
 
-                            // Relationship arrows based on type
                             $arrow = match ($relationType) {
                                 'BelongsTo' => " -->|1 to 1| ",
                                 'HasOne' => " -->|1 to 1| ",
@@ -835,65 +891,95 @@ class GenerateDocumentationCommand extends Command
 
 
 
-    protected function getControllersDocumentation($path)
-    {
-        $controllersPath = $path . '/app/Http/Controllers';
-        $controllers = array_diff(scandir($controllersPath), ['..', '.']);
-        $doc = "## Controllers Documentation\n\n";
 
-        $controllerCount = 1; // Initialize a counter for controllers
+protected function getControllersDocumentation($path)
+{
+    $controllersPath = $path . '/app/Http/Controllers';
+    $doc = "## Controllers Documentation\n\n";
 
-        foreach ($controllers as $controller) {
-            if (pathinfo($controller, PATHINFO_EXTENSION) === 'php') {
-                $controllerName = pathinfo($controller, PATHINFO_FILENAME);
-                $doc .= "### **{$controllerCount}. Controller**: `$controllerName`\n";
+    // Get all PHP files recursively inside Controllers directory
+    $controllerFiles = $this->getAllControllerFiles($controllersPath);
 
-                // Reflection for additional methods
-                $reflection = new \ReflectionClass("App\\Http\\Controllers\\$controllerName");
-                $methods = [];
+    $controllerCount = 1;
 
-                foreach ($reflection->getMethods() as $method) {
-                    if ($method->isPublic() && $method->getDeclaringClass()->getName() === $reflection->getName()) {
-                        // Get the method name
-                        $methodName = $method->getName();
+    foreach ($controllerFiles as $controllerFile) {
+        $relativePath = str_replace($controllersPath . DIRECTORY_SEPARATOR, '', $controllerFile);
+        $controllerName = pathinfo($controllerFile, PATHINFO_FILENAME);
 
-                        // Get the doc comment
-                        $docComment = $method->getDocComment();
-                        $comment = '';
+        // Derive the fully-qualified class name by replacing slashes with namespace separators
+        $namespacePart = str_replace(DIRECTORY_SEPARATOR, '\\', dirname($relativePath));
+        $namespacePart = $namespacePart !== '.' ? '\\' . $namespacePart : '';
+        $fullClassName = "App\\Http\\Controllers{$namespacePart}\\{$controllerName}";
 
-                        // Extract comment, if it exists
-                        if ($docComment) {
-                            // Remove the comment's asterisks and trim whitespace
-                            $comment = trim(preg_replace('/\s*\*\s*/', ' ', $docComment));
-                            $comment = preg_replace('/^\/\*\*|\*\/$/', '', $comment);
-                        }
-
-                        // Append method information to documentation
-                        $doc .= "  - **Method**: `{$methodName}`\n";
-                        if ($comment) {
-                            $doc .= "    - **Description**: $comment\n";
-                        }
-
-                        // Collect methods for random selection
-                        $methods[] = $method;
-                    }
-                }
-
-                // Add a random method example if any methods exist
-                if (!empty($methods)) {
-                    $randomMethod = $methods[array_rand($methods)]; // Select a random method
-                    $methodCode = $this->getMethodCode($randomMethod); // Get the method code
-                    $doc .= "  - **Random Method Example**:\n";
-                    $doc .= "```php\n$methodCode\n```\n";
-                }
-
-                $doc .= "\n---\n\n"; // Add a horizontal line after each controller
-                $controllerCount++; // Increment the controller counter
-            }
+        if (!class_exists($fullClassName)) {
+            require_once $controllerFile;
         }
 
-        return $doc;
+        if (class_exists($fullClassName)) {
+            $doc .= "### **{$controllerCount}. Controller**: `$fullClassName`\n";
+
+            $reflection = new \ReflectionClass($fullClassName);
+            $methods = [];
+
+            foreach ($reflection->getMethods() as $method) {
+                if ($method->isPublic() && $method->getDeclaringClass()->getName() === $reflection->getName()) {
+                    $methodName = $method->getName();
+                    $docComment = $method->getDocComment();
+                    $comment = '';
+
+                    if ($docComment) {
+                        $comment = trim(preg_replace('/\s*\*\s*/', ' ', $docComment));
+                        $comment = preg_replace('/^\/\*\*|\*\/$/', '', $comment);
+                    }
+
+                    $doc .= "  - **Method**: `{$methodName}`\n";
+                    if ($comment) {
+                        $doc .= "    - **Description**: $comment\n";
+                    }
+
+                    $methods[] = $method;
+                }
+            }
+
+            if (!empty($methods)) {
+                $randomMethod = $methods[array_rand($methods)];
+                $methodCode = $this->getMethodCode($randomMethod);
+                $doc .= "  - **Random Method Example**:\n";
+                $doc .= "```php\n$methodCode\n```\n";
+            }
+
+            $doc .= "\n---\n\n";
+            $controllerCount++;
+        }
     }
+
+    return $doc;
+}
+
+/**
+ * Recursively collect all PHP controller files in the given directory.
+ */
+protected function getAllControllerFiles($dir)
+{
+    $files = [];
+    $items = scandir($dir);
+
+    foreach ($items as $item) {
+        if ($item === '.' || $item === '..') continue;
+
+        $path = $dir . DIRECTORY_SEPARATOR . $item;
+
+        if (is_dir($path)) {
+            // Recurse into subdirectories
+            $files = array_merge($files, $this->getAllControllerFiles($path));
+        } elseif (pathinfo($path, PATHINFO_EXTENSION) === 'php') {
+            $files[] = $path;
+        }
+    }
+
+    return $files;
+}
+
 
     // Helper method to get the code of a method
     protected function getMethodCode(\ReflectionMethod $method)

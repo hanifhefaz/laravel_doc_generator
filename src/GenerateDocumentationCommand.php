@@ -4,8 +4,8 @@ namespace HanifHefaz\DocumentationGenerator;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Route;
-use Illuminate\Support\Facades\Schema;
-use Illuminate\Database\Eloquent\Relations\Relation;
+
+use ReflectionClass;
 
 class GenerateDocumentationCommand extends Command
 {
@@ -27,8 +27,12 @@ class GenerateDocumentationCommand extends Command
         $documentation .= $this->getDocumentationOverview();
         $documentation .= $this->getProjectRequirementsDocumentation();
         $documentation .= $this->getProjectStructureDocumentation($path);
-        $documentation .= $this->getRoutesDocumentation();
+        $documentation .= $this->getInterfacesDocumentation($path);
         $documentation .= $this->getModelsDocumentation($path);
+        $documentation .= $this->getObserversDocumentation($path);
+        $documentation .= $this->getRepositoriesDocumentation($path);
+        $documentation .= $this->getTraitsDocumentation($path);
+        $documentation .= $this->getRoutesDocumentation();
         $documentation .= $this->getSimpleModelDiagram($path);
         $documentation .= $this->getModelsSchemaDiagram($path);
         $documentation .= $this->getDatabaseSchemaAdvanced($path);
@@ -123,8 +127,12 @@ class GenerateDocumentationCommand extends Command
         $doc .= "- [Documentation Overview](#documentation-overview)\n";
         $doc .= "- [Project Requirements and Installation](#project-requirements-and-installation)\n";
         $doc .= "- [Project Structure](#project-structure)\n";
-        $doc .= "- [Routes Documentation](#routes-documentation)\n";
+        $doc .= "- [Interfaces Documentation](#interfaces-documentation)\n";
         $doc .= "- [Models Documentation](#models-documentation)\n";
+        $doc .= "- [Observers Documentation](#observers-documentation)\n";
+        $doc .= "- [Repositories Documentation](#repositories-documentation)\n";
+        $doc .= "- [Traits Documentation](#traits-documentation)\n";
+        $doc .= "- [Routes Documentation](#routes-documentation)\n";
         $doc .= "- [Simple Eloquent Class Diagram](#simple-eloquent-class-diagram)\n";
         $doc .= "- [Database Schema Diagram](#database-schema-diagram)\n";
         $doc .= "- [Database Schema Advanced](#database-schema-advanced)\n";
@@ -398,7 +406,337 @@ class GenerateDocumentationCommand extends Command
 
         return $doc;
     }
+    public function getObserversDocumentation(): string
+    {
+        $directory = base_path('app/Observers'); // fixed path
+        $events = ['creating','created','updating','updated','saving','saved','deleting','deleted','restoring','restored'];
+        $doc = "## Observers Documentation\n\n";
 
+        if (!is_dir($directory)) {
+            return "_Directory not found: {$directory}_";
+        }
+
+        $rii = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($directory));
+        $files = array_filter(iterator_to_array($rii), fn($f) => $f->isFile() && $f->getExtension() === 'php');
+
+        $counter = 0;
+
+        foreach ($files as $file) {
+            $content = file_get_contents($file->getRealPath());
+
+            // Extract class name
+            if (!preg_match('/class\s+(\w+)/', $content, $matches)) continue;
+            $class = $matches[1];
+
+            // Filter: class name must end with "Observer"
+            if (!str_ends_with($class, 'Observer')) continue;
+
+            // Extract namespace
+            $namespace = null;
+            if (preg_match('/namespace\s+(.+?);/', $content, $matches)) {
+                $namespace = $matches[1];
+            }
+            $fullClassName = $namespace ? "$namespace\\$class" : $class;
+
+            // Extract class docblock
+            $docComment = null;
+            if (preg_match('/\/\*\*(.*?)\*\//s', $content, $matches)) {
+                $docComment = $matches[1];
+            }
+
+            // Detect observed model
+            $observedModel = null;
+            if ($docComment && preg_match('/@see\s+([\w\\\\]+)/', $docComment, $match)) {
+                $observedModel = $match[1];
+            } else {
+                $observedModel = substr($class, 0, -8); // e.g., UserObserver -> User
+            }
+
+            // Only include if class has at least one event method
+            if (!preg_match('/function\s+(' . implode('|', $events) . ')\s*\(/', $content)) continue;
+
+            $counter++;
+            $doc .= "### {$counter}. $class\n\n";
+            $doc .= "- **Class:** `$fullClassName`\n";
+            $doc .= "- **File:** `{$file->getRealPath()}`\n";
+            $doc .= "- **Observed Model:** " . ($observedModel ? "`$observedModel`" : "_(unknown)_") . "\n\n";
+
+            // Extract methods
+            $methods = [];
+            if (preg_match_all('/(public|protected|private)?\s+function\s+(\w+)\s*\(([^)]*)\)/', $content, $matches, PREG_SET_ORDER)) {
+                foreach ($matches as $m) {
+                    $visibility = $m[1] ?: 'public';
+                    $name = $m[2];
+                    $params = array_map(fn($p) => trim(explode('=', $p)[0]), array_filter(array_map('trim', explode(',', $m[3]))));
+                    $methods[] = ['name' => $name, 'visibility' => $visibility, 'params' => $params];
+                }
+            }
+
+            $eventMethods = array_filter($methods, fn($m) => in_array($m['name'], $events));
+            $customMethods = array_filter($methods, fn($m) => !in_array($m['name'], $events));
+
+            // Event methods
+            $doc .= "#### Handled Events\n";
+            if (!empty($eventMethods)) {
+                foreach ($eventMethods as $m) {
+                    $doc .= "- `{$m['name']}(" . implode(', ', $m['params']) . ")`\n";
+                }
+            } else $doc .= "- _(none)_\n";
+
+            // Custom methods
+            $doc .= "\n#### Custom Methods\n";
+            if (!empty($customMethods)) {
+                foreach ($customMethods as $m) {
+                    $doc .= "- `{$m['name']}(" . implode(', ', $m['params']) . ")` ({$m['visibility']}) → `mixed`\n";
+                }
+            } else $doc .= "- _(none)_\n";
+
+            $doc .= "\n---\n\n";
+        }
+
+        if ($counter === 0) {
+            $doc .= "_No observer classes found in app/Observers._\n";
+        }
+
+        return $doc;
+    }
+
+
+    protected function getRepositoriesDocumentation($path)
+    {
+        $repositoriesPath = $path . '/app/Repositories';
+        $doc = "## Repositories Documentation\n\n";
+        $doc .= "The following repositories are defined in the `app/Repositories` directory (including subdirectories):\n\n";
+
+        $repoFiles = $this->getAllModelFiles($repositoriesPath);
+
+        foreach ($repoFiles as $file) {
+            $doc .= " `" . pathinfo($file, PATHINFO_FILENAME) . "` |";
+        }
+        $doc .= "\n\n";
+        $count = 1;
+
+        foreach ($repoFiles as $repoFile) {
+            $relativePath = str_replace($repositoriesPath . DIRECTORY_SEPARATOR, '', $repoFile);
+            $repoName = pathinfo($repoFile, PATHINFO_FILENAME);
+            $namespacePart = str_replace(DIRECTORY_SEPARATOR, '\\', dirname($relativePath));
+            $namespacePart = $namespacePart !== '.' ? '\\' . $namespacePart : '';
+            $fullClassName = "App\\Repositories{$namespacePart}\\{$repoName}";
+
+            if (!class_exists($fullClassName)) {
+                require_once $repoFile;
+            }
+
+            if (class_exists($fullClassName)) {
+                $reflection = new \ReflectionClass($fullClassName);
+                $doc .= "\n### **$count**: `$fullClassName`\n";
+
+                // Doc comment
+                $docComment = trim(str_replace(['/**', '*/', '*'], '', $reflection->getDocComment() ?: 'No doc comment.'));
+                $doc .= "  - **Description**: " . ($docComment ?: "_No description available._") . "\n";
+
+                // Implemented interfaces
+                $interfaces = $reflection->getInterfaceNames();
+                $doc .= "  - **Implements**: ";
+                $doc .= !empty($interfaces) ? implode(', ', $interfaces) . "\n" : "_(none)_\n";
+
+                // Properties
+                $doc .= "  - **Properties**:\n";
+                $props = $reflection->getProperties();
+                if (!empty($props)) {
+                    foreach ($props as $prop) {
+                        $doc .= "    - `{$prop->getName()}`\n";
+                    }
+                } else {
+                    $doc .= "    - _(none)_\n";
+                }
+
+                // Methods
+                $doc .= "  - **Methods**:\n";
+                $methods = $reflection->getMethods();
+                foreach ($methods as $m) {
+                    $params = [];
+                    foreach ($m->getParameters() as $param) {
+                        $type = $param->hasType() ? $param->getType() . ' ' : '';
+                        $default = $param->isDefaultValueAvailable()
+                            ? ' = ' . var_export($param->getDefaultValue(), true)
+                            : '';
+                        $params[] = "{$type}\${$param->getName()}{$default}";
+                    }
+                    $returnType = $m->hasReturnType() ? ': ' . $m->getReturnType() : '';
+                    $doc .= "    - `{$m->getName()}(" . implode(', ', $params) . "){$returnType}`\n";
+                }
+                if (empty($methods)) $doc .= "    - _(none)_\n";
+
+                $doc .= "\n---\n\n";
+                $count++;
+            }
+        }
+
+        return $doc;
+    }
+
+    protected function getTraitsDocumentation($path)
+    {
+        $traitsPath = $path . '/app/Traits';
+        $doc = "## Traits Documentation\n\n";
+        $doc .= "The following traits are defined in the `app/Traits` directory (including subdirectories):\n\n";
+
+        $traitFiles = $this->getAllModelFiles($traitsPath);
+
+        foreach ($traitFiles as $file) {
+            $doc .= " `" . pathinfo($file, PATHINFO_FILENAME) . "` |";
+        }
+        $doc .= "\n\n";
+        $count = 1;
+
+        foreach ($traitFiles as $traitFile) {
+            $relativePath = str_replace($traitsPath . DIRECTORY_SEPARATOR, '', $traitFile);
+            $traitName = pathinfo($traitFile, PATHINFO_FILENAME);
+            $namespacePart = str_replace(DIRECTORY_SEPARATOR, '\\', dirname($relativePath));
+            $namespacePart = $namespacePart !== '.' ? '\\' . $namespacePart : '';
+            $fullTraitName = "App\\Traits{$namespacePart}\\{$traitName}";
+
+            if (!trait_exists($fullTraitName)) {
+                require_once $traitFile;
+            }
+
+            if (trait_exists($fullTraitName)) {
+                $reflection = new \ReflectionClass($fullTraitName);
+                $doc .= "\n### **$count**: `$fullTraitName`\n";
+
+                // Extract doc comment
+                $docComment = trim(str_replace(['/**', '*/', '*'], '', $reflection->getDocComment() ?: ''));
+                $doc .= "  - **Description**: " . ($docComment ?: "_No description available._") . "\n";
+
+                // List properties
+                $doc .= "  - **Properties**:\n";
+                $props = $reflection->getProperties();
+                if (!empty($props)) {
+                    foreach ($props as $prop) {
+                        $visibility = $prop->isPublic() ? 'public' : ($prop->isProtected() ? 'protected' : 'private');
+                        $doc .= "    - `{$prop->getName()}` ({$visibility})\n";
+                    }
+                } else {
+                    $doc .= "    - _(none)_\n";
+                }
+
+                // List methods
+                $doc .= "  - **Methods**:\n";
+                $methods = $reflection->getMethods();
+                if (!empty($methods)) {
+                    foreach ($methods as $m) {
+                        $visibility = $m->isPublic()
+                            ? 'public'
+                            : ($m->isProtected() ? 'protected' : 'private');
+
+                        $params = [];
+                        foreach ($m->getParameters() as $param) {
+                            $type = $param->hasType() ? $param->getType() . ' ' : '';
+                            $default = $param->isDefaultValueAvailable()
+                                ? ' = ' . var_export($param->getDefaultValue(), true)
+                                : '';
+                            $params[] = "{$type}\${$param->getName()}{$default}";
+                        }
+
+                        $returnType = $m->hasReturnType() ? ': ' . $m->getReturnType() : '';
+                        $doc .= "    - `{$m->getName()}(" . implode(', ', $params) . "){$returnType}` ({$visibility})\n";
+                    }
+                } else {
+                    $doc .= "    - _(none)_\n";
+                }
+
+                $doc .= "\n---\n\n";
+                $count++;
+            }
+        }
+
+        return $doc;
+    }
+
+
+    protected function getInterfacesDocumentation($path)
+    {
+        $interfacesPath = $path . '/app/Interfaces';
+        $doc = "## Interfaces Documentation\n\n";
+        $doc .= "The following interfaces are defined in the `app/Interfaces` directory (including subdirectories):\n\n";
+
+        // Get all PHP interface files recursively
+        $interfaceFiles = $this->getAllModelFiles($interfacesPath);
+
+        // List interface names in one line
+        foreach ($interfaceFiles as $file) {
+            $doc .= " `" . pathinfo($file, PATHINFO_FILENAME) . "` |";
+        }
+
+        $doc .= "\n\n";
+        $interfacesCount = 1;
+
+        foreach ($interfaceFiles as $interfaceFile) {
+            $relativePath = str_replace($interfacesPath . DIRECTORY_SEPARATOR, '', $interfaceFile);
+            $interfaceName = pathinfo($interfaceFile, PATHINFO_FILENAME);
+
+            // Build full namespace (handles nested folders)
+            $namespacePart = str_replace(DIRECTORY_SEPARATOR, '\\', dirname($relativePath));
+            $namespacePart = $namespacePart !== '.' ? '\\' . $namespacePart : '';
+            $fullClassName = "App\\Interfaces{$namespacePart}\\{$interfaceName}";
+
+            // Ensure the interface is loaded
+            if (!interface_exists($fullClassName)) {
+                require_once $interfaceFile;
+            }
+
+            if (interface_exists($fullClassName)) {
+                $doc .= "\n### **$interfacesCount**: `$fullClassName`\n";
+
+                $reflection = new \ReflectionClass($fullClassName);
+
+                // Show parent interfaces
+                $parentInterfaces = $reflection->getInterfaceNames();
+                $doc .= "  - **Extends**: ";
+                $doc .= !empty($parentInterfaces) ? implode(', ', $parentInterfaces) . "\n" : "_(none)_\n";
+
+                // List methods
+                $methods = $reflection->getMethods();
+                $doc .= "  - **Methods**:\n";
+
+                if (!empty($methods)) {
+                    foreach ($methods as $method) {
+                        $params = [];
+                        foreach ($method->getParameters() as $param) {
+                            $type = $param->hasType() ? $param->getType() . ' ' : '';
+                            $default = $param->isDefaultValueAvailable()
+                                ? ' = ' . var_export($param->getDefaultValue(), true)
+                                : '';
+                            $params[] = "{$type}\${$param->getName()}{$default}";
+                        }
+
+                        $returnType = $method->hasReturnType() ? ': ' . $method->getReturnType() : '';
+                        $doc .= "    - `{$method->getName()}(" . implode(', ', $params) . "){$returnType}`\n";
+                    }
+                } else {
+                    $doc .= "    - _(none)_\n";
+                }
+
+                // Optional Mermaid diagram for interface inheritance
+                if (!empty($parentInterfaces)) {
+                    $doc .= "\n#### Interface Inheritance Diagram\n";
+                    $doc .= "```mermaid\n";
+                    $doc .= "graph TD\n";
+                    foreach ($parentInterfaces as $parent) {
+                        $parentName = class_basename($parent);
+                        $doc .= "    {$parentName} --> {$interfaceName}\n";
+                    }
+                    $doc .= "```\n";
+                }
+
+                $doc .= "\n---\n\n";
+                $interfacesCount++;
+            }
+        }
+
+        return $doc;
+    }
     protected function getRoutesDocumentation()
     {
         $routes = Route::getRoutes();
